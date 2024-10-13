@@ -4,7 +4,7 @@
 set -e
 
 # Hardcoded current account address
-CURRENT_ACCOUNT="0x7384fc7adb9991b4a6dc90b40f354d20a42428a94148865ed8dc9650f5ecfa82"
+CURRENT_ACCOUNT="0x93f91475cfc3294debda4649ff9f2011b4a92a13c3e9de6714c416ba377a2b38"
 
 # Install Aptos CLI if not installed
 if ! command -v aptos &> /dev/null

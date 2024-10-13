@@ -122,3 +122,16 @@ This project transforms a traditional virtual network switch (similar to ZeroTie
 Contributions are welcome! Please open issues or submit pull requests for enhancements and bug fixes.
 
 
+
+
+terminal 1 - 
+gcc -o vport src/vport.c
+sudo ./vport 127.0.0.1 8005
+
+temrinal 2 - 
+python3 src/vswitch.py 8005
+
+terminal 3 - 
+sudo ifconfig utun4 10.1.1.101 10.1.1.102 up
+ping 10.1.1.102
+

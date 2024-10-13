@@ -6,4 +6,4 @@ version = "1.0.0"
 AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "main" }
 
 [addresses]
-MAC_TABLE = "0xa993640cb5471ff4a950aaa7ea14e1e05a9722ecd6c4ff5af267474806c8208f"  # Replace with your actual address or use "0x1" for testing
+MAC_TABLE = "0x125a3d5f49675dd952cac71c50fd2cdaa6a3c53e2816428573b06af6e18dd564" 

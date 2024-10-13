@@ -5,3 +5,4 @@ aptos/contracts/mac_table/.*
 aptos/contracts/mac_table/build
 aptos/contracts/vport_management/build
 vswitch/src/__pycache__
+vport/vport

@@ -3,36 +3,66 @@
 #include <string.h>
 #include <unistd.h>
 #include <fcntl.h>
-#include <linux/if_tun.h>
 #include <sys/ioctl.h>
 #include <sys/socket.h>
+#include <sys/sys_domain.h>
+#include <sys/kern_control.h>
+#include <net/if_utun.h>
+#include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
 
-// Function to create a TAP device
-int create_tap_device(char *dev) {
-    struct ifreq ifr;
-    int fd, err;
+#define UTUN_CONTROL_NAME "com.apple.net.utun_control"
+#define MAX_DEVICE_NAME_LEN 32
 
-    if ((fd = open("/dev/net/tun", O_RDWR)) < 0 ) {
-        perror("Opening /dev/net/tun");
-        return fd;
+int create_utun_device(char *dev, size_t dev_size) {
+    struct ctl_info ctlInfo;
+    struct sockaddr_ctl sc;
+    int fd;
+
+    memset(&ctlInfo, 0, sizeof(ctlInfo));
+    if (strlcpy(ctlInfo.ctl_name, UTUN_CONTROL_NAME, sizeof(ctlInfo.ctl_name)) >= sizeof(ctlInfo.ctl_name)) {
+        fprintf(stderr, "UTUN control name too long");
+        return -1;
     }
 
-    memset(&ifr, 0, sizeof(ifr));
-
-    ifr.ifr_flags = IFF_TAP | IFF_NO_PI; 
-    if (*dev) {
-        strncpy(ifr.ifr_name, dev, IFNAMSIZ);
+    fd = socket(PF_SYSTEM, SOCK_DGRAM, SYSPROTO_CONTROL);
+    if (fd == -1) {
+        perror("socket(SYSPROTO_CONTROL)");
+        return -1;
     }
 
-    if ((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0 ) {
-        perror("ioctl(TUNSETIFF)");
+    if (ioctl(fd, CTLIOCGINFO, &ctlInfo) == -1) {
+        perror("ioctl(CTLIOCGINFO)");
         close(fd);
-        return err;
+        return -1;
     }
 
-    strcpy(dev, ifr.ifr_name);
+    sc.sc_id = ctlInfo.ctl_id;
+    sc.sc_len = sizeof(sc);
+    sc.sc_family = AF_SYSTEM;
+    sc.ss_sysaddr = AF_SYS_CONTROL;
+    sc.sc_unit = 0; // Let the kernel assign the unit number
+
+    if (connect(fd, (struct sockaddr *)&sc, sizeof(sc)) == -1) {
+        perror("connect(AF_SYS_CONTROL)");
+        close(fd);
+        return -1;
+    }
+
+    // Get the assigned utun device name
+    char utunname[MAX_DEVICE_NAME_LEN];
+    socklen_t utunname_len = sizeof(utunname);
+    if (getsockopt(fd, SYSPROTO_CONTROL, UTUN_OPT_IFNAME, utunname, &utunname_len) == -1) {
+        perror("getsockopt(UTUN_OPT_IFNAME)");
+        close(fd);
+        return -1;
+    }
+
+    if (dev_size > 0) {
+        strlcpy(dev, utunname, dev_size);
+    }
+
     return fd;
 }
 
@@ -45,24 +75,23 @@ int main(int argc, char *argv[]) {
     char *SERVER_IP = argv[1];
     int SERVER_PORT = atoi(argv[2]);
 
-    char tap_name[IFNAMSIZ] = "tapyuan";
-    int tap_fd = create_tap_device(tap_name);
-    if (tap_fd < 0) {
-        fprintf(stderr, "Error creating TAP device\n");
+    char utun_name[MAX_DEVICE_NAME_LEN];
+    int utun_fd = create_utun_device(utun_name, sizeof(utun_name));
+    if (utun_fd < 0) {
+        fprintf(stderr, "Error creating utun device\n");
         exit(1);
     }
 
-    printf("TAP device %s created\n", tap_name);
+    printf("utun device %s created\n", utun_name);
 
-    // Configure TAP device (should be done externally or via scripts)
-    // e.g., sudo ip addr add 10.1.1.101/24 dev tapyuan
-    // sudo ip link set tapyuan up
+    // Configure utun device (should be done externally or via scripts)
+    // e.g., sudo ifconfig utun0 10.1.1.101 10.1.1.102 up
 
     // Create UDP socket
     int sockfd;
     struct sockaddr_in servaddr;
 
-    if ( (sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0 ) {
+    if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) {
         perror("socket creation failed");
         exit(EXIT_FAILURE);
     }
@@ -73,13 +102,13 @@ int main(int argc, char *argv[]) {
     servaddr.sin_port = htons(SERVER_PORT);
     servaddr.sin_addr.s_addr = inet_addr(SERVER_IP);
 
-    // Main loop: read from TAP and send to server, read from server and write to TAP
+    // Main loop: read from utun and send to server, read from server and write to utun
     fd_set read_fds;
-    int maxfd = (tap_fd > sockfd) ? tap_fd : sockfd;
+    int maxfd = (utun_fd > sockfd) ? utun_fd : sockfd;
 
     while (1) {
         FD_ZERO(&read_fds);
-        FD_SET(tap_fd, &read_fds);
+        FD_SET(utun_fd, &read_fds);
         FD_SET(sockfd, &read_fds);
 
         int ret = select(maxfd + 1, &read_fds, NULL, NULL, NULL);
@@ -89,25 +118,27 @@ int main(int argc, char *argv[]) {
             break;
         }
 
-        if (FD_ISSET(tap_fd, &read_fds)) {
+        if (FD_ISSET(utun_fd, &read_fds)) {
             char buffer[2048];
-            int nread = read(tap_fd, buffer, sizeof(buffer));
+            int nread = read(utun_fd, buffer, sizeof(buffer));
             if (nread < 0) {
-                perror("Reading from TAP");
+                perror("Reading from utun");
                 break;
             }
 
-            // Wrap Ethernet frame in JSON
+            // Skip the first 4 bytes (utun header)
+            char *packet = buffer + 4;
+            nread -= 4;
+
+            // Wrap packet in JSON
             // Simplified for example
             // In production, use proper serialization
-            // Extract MAC addresses and payload
-            // Placeholder values
-            char json_frame[4096];
-            snprintf(json_frame, sizeof(json_frame), 
-                     "{\"source_mac\":\"11:11:11:11:11:11\",\"destination_mac\":\"aa:aa:aa:aa:aa:aa\",\"payload\":\"%s\"}", 
-                     buffer);
+            char json_packet[4096];
+            snprintf(json_packet, sizeof(json_packet), 
+                     "{\"source_ip\":\"10.1.1.101\",\"destination_ip\":\"10.1.1.102\",\"payload\":\"%.*s\"}", 
+                     nread, packet);
 
-            sendto(sockfd, json_frame, strlen(json_frame), 0, 
+            sendto(sockfd, json_packet, strlen(json_packet), 0, 
                    (struct sockaddr *)&servaddr, sizeof(servaddr));
         }
 
@@ -122,23 +153,29 @@ int main(int argc, char *argv[]) {
             }
             buffer[n] = '\0';
 
-            // Parse JSON and write to TAP
+            // Parse JSON and write to utun
             // Simplified for example
             // In production, use proper JSON parsing
-            // Extract payload
             char *payload_start = strstr(buffer, "\"payload\":\"");
             if (payload_start) {
                 payload_start += strlen("\"payload\":\"");
                 char *payload_end = strstr(payload_start, "\"");
                 if (payload_end) {
                     *payload_end = '\0';
-                    write(tap_fd, payload_start, strlen(payload_start));
+                    int payload_len = payload_end - payload_start;
+
+                    // Prepend 4-byte header for utun
+                    char utun_packet[2048];
+                    *(uint32_t *)utun_packet = htonl(AF_INET);  // IPv4
+                    memcpy(utun_packet + 4, payload_start, payload_len);
+
+                    write(utun_fd, utun_packet, payload_len + 4);
                 }
             }
         }
     }
 
-    close(tap_fd);
+    close(utun_fd);
     close(sockfd);
     return 0;
 }

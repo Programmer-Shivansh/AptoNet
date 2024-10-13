@@ -3,4 +3,5 @@ scripts/addr.*
 aptos/contracts/vport_management/.*
 aptos/contracts/mac_table/.*
 aptos/contracts/mac_table/build
-aptos/contracts/vport_management/b*
+aptos/contracts/vport_management/build
+vswitch/src/__pycache__

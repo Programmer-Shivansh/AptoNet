@@ -1,4 +1,4 @@
-aptos-sdk==0.1.0
+aptos-sdk
 asyncio
 socket
 json

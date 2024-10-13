@@ -1,7 +1,9 @@
 [package]
 name = "vport_management"
-version = "0.1.0"
-authors = ["Your Name <you@example.com>"]
+version = "1.0.0"
 
 [dependencies]
-Std = { local = "../.." }
+AptosFramework = { git = "https://github.com/aptos-labs/aptos-core.git", subdir = "aptos-move/framework/aptos-framework/", rev = "main" }
+
+[addresses]
+VPORT_MANAGEMENT = "0x74acd9749ab643f8dc4f85b704ac9bd1ed832e21520cc3088da35a8f9a363ebe"  # Replace with your actual address or use "0x1" for testing

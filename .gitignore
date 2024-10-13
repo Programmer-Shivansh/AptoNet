@@ -1,1 +1,4 @@
 scripts/.*
+scripts/addr.*
+aptos/contracts/vport_management/.*
+aptos/contracts/mac_table/.*

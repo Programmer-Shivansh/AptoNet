@@ -1,4 +1,4 @@
 git pull 
 git add . 
-git commit -m "Sending Packets Done"
+git commit -m "Ping Done"
 git push -u origin main

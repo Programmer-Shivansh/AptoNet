@@ -1,10 +1,9 @@
 import asyncio
 import logging
-import struct
+import json
+import base64
 from typing import Dict
-from aptos_client import AptosBlockchain
-from aptos_sdk.account import Account
-
+import binascii
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger("VSwitch")
 
@@ -13,10 +12,8 @@ class VPort:
         self.address = address
 
 class VSwitch:
-    def __init__(self, server_port: int, aptos_client: AptosBlockchain, account: Account):
+    def __init__(self, server_port: int):
         self.server_port = server_port
-        self.aptos_client = aptos_client
-        self.account = account
         self.vports: Dict[str, VPort] = {}
         self.ip_to_vport: Dict[str, str] = {}
 
@@ -31,21 +28,28 @@ class VSwitch:
             asyncio.create_task(self.vswitch.handle_packet(data, addr))
 
     async def handle_packet(self, data: bytes, addr):
-        vport_address = f"0x{addr[0].replace('.', '')}"
+        vport_address = f"{addr[0]}:{addr[1]}"
         logger.info(f"Received {len(data)} bytes from {vport_address}")
 
         if vport_address not in self.vports:
             self.vports[vport_address] = VPort(vport_address)
             logger.info(f"New VPort connected: {vport_address}")
 
+        try:
+            json_data = json.loads(data.decode())
+            payload = base64.b64decode(json_data['payload'])
+        except (json.JSONDecodeError, KeyError, binascii.Error) as e:
+            logger.error(f"Error decoding packet: {e}")
+            return
+
         # Extract IP addresses from the packet
-        version = (data[0] >> 4) & 0xF
+        version = (payload[0] >> 4) & 0xF
         if version == 4:  # IPv4
-            src_ip = '.'.join(map(str, data[12:16]))
-            dest_ip = '.'.join(map(str, data[16:20]))
+            src_ip = '.'.join(map(str, payload[12:16]))
+            dest_ip = '.'.join(map(str, payload[16:20]))
         elif version == 6:  # IPv6
-            src_ip = ':'.join([f"{data[i]:02x}{data[i+1]:02x}" for i in range(8, 24, 2)])
-            dest_ip = ':'.join([f"{data[i]:02x}{data[i+1]:02x}" for i in range(24, 40, 2)])
+            src_ip = ':'.join([f"{payload[i]:02x}{payload[i+1]:02x}" for i in range(8, 24, 2)])
+            dest_ip = ':'.join([f"{payload[i]:02x}{payload[i+1]:02x}" for i in range(24, 40, 2)])
         else:
             logger.warning(f"Unsupported IP version: {version}")
             return
@@ -60,23 +64,32 @@ class VSwitch:
         dest_vport_address = self.ip_to_vport.get(dest_ip)
         if dest_vport_address:
             logger.debug(f"Forwarding to {dest_vport_address}")
-            await self.forward_payload(dest_vport_address, data)
+            await self.forward_payload(dest_vport_address, payload)
         else:
-            logger.debug(f"Broadcasting to all except {vport_address}")
-            await self.broadcast(data, exclude=vport_address)
+            logger.debug(f"Destination not found, broadcasting")
+            await self.broadcast(payload, exclude=vport_address)
 
     async def forward_payload(self, dest_vport_address: str, payload: bytes):
-        dest_vport = self.vports.get(dest_vport_address)
-        if dest_vport:
-            self.transport.sendto(payload, (dest_vport.address.split('x')[1], self.server_port))
-            logger.info(f"Forwarded {len(payload)} bytes to {dest_vport_address}")
-        else:
-            logger.warning(f"Destination VPort {dest_vport_address} not found")
+        dest_ip, dest_port = dest_vport_address.split(':')
+        dest_port = int(dest_port)
+        
+        # Wrap payload in JSON
+        json_payload = json.dumps({
+            "payload": base64.b64encode(payload).decode()
+        })
+        
+        self.transport.sendto(json_payload.encode(), (dest_ip, dest_port))
+        logger.info(f"Forwarded {len(payload)} bytes to {dest_vport_address}")
 
     async def broadcast(self, payload: bytes, exclude: str):
+        json_payload = json.dumps({
+            "payload": base64.b64encode(payload).decode()
+        })
         for vport_address, vport in self.vports.items():
             if vport_address != exclude:
-                self.transport.sendto(payload, (vport.address.split('x')[1], self.server_port))
+                dest_ip, dest_port = vport_address.split(':')
+                dest_port = int(dest_port)
+                self.transport.sendto(json_payload.encode(), (dest_ip, dest_port))
         logger.info(f"Broadcasted {len(payload)} bytes to all VPorts except {exclude}")
 
     async def start_server(self):
@@ -96,7 +109,6 @@ class VSwitch:
 
 if __name__ == "__main__":
     import sys
-    from aptos_sdk.async_client import RestClient
 
     if len(sys.argv) != 2:
         print("Usage: python3 vswitch.py <SERVER_PORT>")
@@ -104,23 +116,187 @@ if __name__ == "__main__":
 
     SERVER_PORT = int(sys.argv[1])
 
-    # Initialize Aptos blockchain client (simplified for debugging)
-    NODE_URL = "https://fullnode.devnet.aptoslabs.com/v1"
-    VPORT_MANAGEMENT_ADDRESS = "0x5f6f6140fc53d3e6951a85ae4358f7f3646232a7a0fa347fbceb39b93194e5ba"
-    MAC_TABLE_ADDRESS = "0x125a3d5f49675dd952cac71c50fd2cdaa6a3c53e2816428573b06af6e18dd564"
-
-    aptos_client = AptosBlockchain(
-        node_url=NODE_URL,
-        vport_management_address=VPORT_MANAGEMENT_ADDRESS,
-        mac_table_address=MAC_TABLE_ADDRESS
-    )
-
-    # Create an Account instance (simplified for debugging)
-    private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-    account = Account.load_key(private_key)
-
-    vswitch = VSwitch(SERVER_PORT, aptos_client, account)
+    vswitch = VSwitch(SERVER_PORT)
     asyncio.run(vswitch.start_server())
+# import asyncio
+# import logging
+# import struct
+# from typing import Dict
+# from aptos_client import AptosBlockchain
+# from aptos_sdk.account import Account
+# import base64
+# import json
+# import binascii
+
+# logging.basicConfig(level=logging.DEBUG)
+# logger = logging.getLogger("VSwitch")
+
+# class VPort:
+#     def __init__(self, address: str):
+#         self.address = address
+
+# class VSwitch:
+#     def __init__(self, server_port: int, aptos_client: AptosBlockchain, account: Account):
+#         self.server_port = server_port
+#         self.aptos_client = aptos_client
+#         self.account = account
+#         self.vports: Dict[str, VPort] = {}
+#         self.ip_to_vport: Dict[str, str] = {}
+
+#     class UDPServerProtocol(asyncio.DatagramProtocol):
+#         def __init__(self, vswitch):
+#             self.vswitch = vswitch
+
+#         def connection_made(self, transport):
+#             self.transport = transport
+
+#         def datagram_received(self, data, addr):
+#             asyncio.create_task(self.vswitch.handle_packet(data, addr))
+
+#     # async def handle_packet(self, data: bytes, addr):
+#     #     vport_address = f"0x{addr[0].replace('.', '')}"
+#     #     logger.info(f"Received {len(data)} bytes from {vport_address}")
+
+#     #     if vport_address not in self.vports:
+#     #         self.vports[vport_address] = VPort(vport_address)
+#     #         logger.info(f"New VPort connected: {vport_address}")
+
+#     #     # Extract IP addresses from the packet
+#     #     version = (data[0] >> 4) & 0xF
+#     #     if version == 4:  # IPv4
+#     #         src_ip = '.'.join(map(str, data[12:16]))
+#     #         dest_ip = '.'.join(map(str, data[16:20]))
+#     #     elif version == 6:  # IPv6
+#     #         src_ip = ':'.join([f"{data[i]:02x}{data[i+1]:02x}" for i in range(8, 24, 2)])
+#     #         dest_ip = ':'.join([f"{data[i]:02x}{data[i+1]:02x}" for i in range(24, 40, 2)])
+#     #     else:
+#     #         logger.warning(f"Unsupported IP version: {version}")
+#     #         return
+
+#     #     logger.debug(f"Processing packet: src_ip={src_ip}, dest_ip={dest_ip}")
+
+#     #     # Update IP table
+#     #     self.ip_to_vport[src_ip] = vport_address
+#     #     logger.debug(f"Updated IP table: {self.ip_to_vport}")
+
+#     #     # Lookup destination IP
+#     #     dest_vport_address = self.ip_to_vport.get(dest_ip)
+#     #     if dest_vport_address:
+#     #         logger.debug(f"Forwarding to {dest_vport_address}")
+#     #         await self.forward_payload(dest_vport_address, data)
+#     #     else:
+#     #         logger.debug(f"Broadcasting to all except {vport_address}")
+#     #         await self.broadcast(data, exclude=vport_address)
+#     async def handle_packet(self, data: bytes, addr):
+#         vport_address = f"{addr[0]}:{addr[1]}"
+#         logger.info(f"Received {len(data)} bytes from {vport_address}")
+
+#         if vport_address not in self.vports:
+#             self.vports[vport_address] = VPort(vport_address)
+#             logger.info(f"New VPort connected: {vport_address}")
+
+#         try:
+#             json_data = json.loads(data.decode())
+#             payload = base64.b64decode(json_data['payload'])
+#         except (json.JSONDecodeError, KeyError, binascii.Error) as e:
+#             logger.error(f"Error decoding packet: {e}")
+#             return
+
+#         # Extract IP addresses from the packet
+#         version = (payload[0] >> 4) & 0xF
+#         if version == 4:  # IPv4
+#             src_ip = '.'.join(map(str, payload[12:16]))
+#             dest_ip = '.'.join(map(str, payload[16:20]))
+#         elif version == 6:  # IPv6
+#             src_ip = ':'.join([f"{payload[i]:02x}{payload[i+1]:02x}" for i in range(8, 24, 2)])
+#             dest_ip = ':'.join([f"{payload[i]:02x}{payload[i+1]:02x}" for i in range(24, 40, 2)])
+#         else:
+#             logger.warning(f"Unsupported IP version: {version}")
+#             return
+
+#         logger.debug(f"Processing packet: src_ip={src_ip}, dest_ip={dest_ip}")
+
+#         # Update IP table
+#         self.ip_to_vport[src_ip] = vport_address
+#         logger.debug(f"Updated IP table: {self.ip_to_vport}")
+
+#         # Lookup destination IP
+#         dest_vport_address = self.ip_to_vport.get(dest_ip)
+#         if dest_vport_address:
+#             logger.debug(f"Forwarding to {dest_vport_address}")
+#             await self.forward_payload(dest_vport_address, payload)
+#         else:
+#             logger.debug(f"Destination not found, sending back to source")
+#             await self.forward_payload(vport_address, payload)
+
+#     async def forward_payload(self, dest_vport_address: str, payload: bytes):
+#         dest_ip, dest_port = dest_vport_address.split(':')
+#         dest_port = int(dest_port)
+        
+#         # Wrap payload in JSON
+#         json_payload = json.dumps({
+#             "payload": base64.b64encode(payload).decode()
+#         })
+        
+#         self.transport.sendto(json_payload.encode(), (dest_ip, dest_port))
+#         logger.info(f"Forwarded {len(payload)} bytes to {dest_vport_address}")
+
+#     # async def forward_payload(self, dest_vport_address: str, payload: bytes):
+#     #     dest_vport = self.vports.get(dest_vport_address)
+#     #     if dest_vport:
+#     #         self.transport.sendto(payload, (dest_vport.address.split('x')[1], self.server_port))
+#     #         logger.info(f"Forwarded {len(payload)} bytes to {dest_vport_address}")
+#     #     else:
+#     #         logger.warning(f"Destination VPort {dest_vport_address} not found")
+
+#     async def broadcast(self, payload: bytes, exclude: str):
+#         for vport_address, vport in self.vports.items():
+#             if vport_address != exclude:
+#                 self.transport.sendto(payload, (vport.address.split('x')[1], self.server_port))
+#         logger.info(f"Broadcasted {len(payload)} bytes to all VPorts except {exclude}")
+
+#     async def start_server(self):
+#         loop = asyncio.get_running_loop()
+#         transport, protocol = await loop.create_datagram_endpoint(
+#             lambda: self.UDPServerProtocol(self),
+#             local_addr=('0.0.0.0', self.server_port)
+#         )
+#         self.transport = transport
+
+#         logger.info(f"VSwitch UDP server started on 0.0.0.0:{self.server_port}")
+
+#         try:
+#             await asyncio.Future()  # Run forever
+#         finally:
+#             transport.close()
+
+# if __name__ == "__main__":
+#     import sys
+#     from aptos_sdk.async_client import RestClient
+
+#     if len(sys.argv) != 2:
+#         print("Usage: python3 vswitch.py <SERVER_PORT>")
+#         sys.exit(1)
+
+#     SERVER_PORT = int(sys.argv[1])
+
+#     # Initialize Aptos blockchain client (simplified for debugging)
+#     NODE_URL = "https://fullnode.devnet.aptoslabs.com/v1"
+#     VPORT_MANAGEMENT_ADDRESS = "0x5f6f6140fc53d3e6951a85ae4358f7f3646232a7a0fa347fbceb39b93194e5ba"
+#     MAC_TABLE_ADDRESS = "0x125a3d5f49675dd952cac71c50fd2cdaa6a3c53e2816428573b06af6e18dd564"
+
+#     aptos_client = AptosBlockchain(
+#         node_url=NODE_URL,
+#         vport_management_address=VPORT_MANAGEMENT_ADDRESS,
+#         mac_table_address=MAC_TABLE_ADDRESS
+#     )
+
+#     # Create an Account instance (simplified for debugging)
+#     private_key = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+#     account = Account.load_key(private_key)
+
+#     vswitch = VSwitch(SERVER_PORT, aptos_client, account)
+#     asyncio.run(vswitch.start_server())
 # import asyncio
 # import json
 # import logging

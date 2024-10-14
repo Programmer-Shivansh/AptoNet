@@ -1,4 +1,4 @@
 git pull 
 git add . 
-git commit -m "Ping Done"
+git commit -m "Final"
 git push -u origin main

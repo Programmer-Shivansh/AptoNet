@@ -15,6 +15,8 @@
 - [Future Scope](#future-scope)
 - [Technology Stack](#technology-stack)
 - [Setup](#Setup)
+- [How It Works](#How-It-Works)
+
 - [Contact Information](#contact-information)
 
 
@@ -205,6 +207,32 @@ AptoNet is positioned for significant evolution and expansion in the upcoming ye
     ping 10.1.1.102  # From Client-1 to Client-2
     ping 10.1.1.101  # From Client-2 to Client-1
     ```
+
+
+## How It Works
+
+1. **VPort Registration and Authentication**
+
+    - VPorts register with the VSwitch server via the Aptos blockchain.
+    - Smart contracts handle authentication, ensuring only authorized VPorts can connect.
+
+2. **Decentralized MAC Address Management**
+
+    - The MAC address table is stored on the Aptos blockchain.
+    - VSwitch nodes read from and write to the blockchain to maintain a consistent view of the network.
+
+3. **Ethernet Frame Forwarding**
+
+    - VSwitch nodes manage Ethernet frame exchanges based on the decentralized MAC table.
+    - Frames are forwarded to the appropriate VPort clients or broadcasted as needed.
+
+## Additional Information
+
+- **Smart Contracts**: Located in `aptos/contracts/`.
+- **VSwitch Server Code**: Located in `vswitch/src/`.
+- **VPort Client Code**: Located in `vport/src/`.
+
+
 
 ## Contact Information
 

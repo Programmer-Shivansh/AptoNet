@@ -14,6 +14,7 @@
 - [Business Model](#business-model)
 - [Future Scope](#future-scope)
 - [Technology Stack](#technology-stack)
+- [Setup](#Setup)
 - [Contact Information](#contact-information)
 
 
@@ -128,6 +129,83 @@ AptoNet is positioned for significant evolution and expansion in the upcoming ye
 - **Real-Time Communication**:
   - Utilizes **WebSocket** technology for real-time communication between devices.
   
+
+## Setup
+
+1. **Clone the Repository**
+
+    ```bash
+    git clone https://github.com/Programmer-Shivansh/AptoNet.git
+    cd AptoNet
+    ```
+
+2. **Setup Blockchain**
+
+    ```bash
+    cd scripts
+    aptos init 
+    // Put the address obtained in the setup_blockchain.sh
+    ./setup_blockchain.sh
+    ```
+    - Save the VPort Admin Address
+
+3. **Deploy Smart Contracts**
+
+    ```bash
+    cd aptos/contracts
+
+    cd mac_table 
+    aptos init 
+    // Put the address obtained in move.toml
+    cd ../vport_management
+    aptos init
+    // Put the address obtained in move.toml
+
+    cd ../scripts
+    ./deploy_contracts.sh
+    ```
+
+    - This will compile and publish the VPort Management and MAC Table contracts to the Aptos blockchain.
+
+4. **Configure and Run VSwitch Server**
+
+    ```bash
+    cd ../vswitch
+    pip install -r requirements.txt
+    python3 src/vswitch.py <SERVER_PORT>
+    ```
+
+    - Replace `<SERVER_PORT>` with your desired port number (e.g., `8000`).
+
+5. **Build and Run VPort Clients**
+
+    ```bash
+    cd ../../vport
+    make
+    sudo ./vport <SERVER_IP> <SERVER_PORT>
+    ```
+
+    - Replace `<SERVER_IP>` with the VSwitch server's IP address and `<SERVER_PORT>` with the port number.
+
+6. **Configure UTUN Devices**
+
+    On each client machine:
+
+    ```bash
+    sudo ifconfig utun4 10.1.1.101 10.1.1.102 netmask 255.255.255.0 up
+    sudo ifconfig utun5 10.1.1.102 10.1.1.101 netmask 255.255.255.0 up
+    ```
+    - Adjust the IP address as needed for each client.
+
+7. **Test Connectivity**
+
+    - Ping between clients to ensure connectivity:
+
+    ```bash
+    ping 10.1.1.102  # From Client-1 to Client-2
+    ping 10.1.1.101  # From Client-2 to Client-1
+    ```
+
 ## Contact Information
 
 For inquiries, support, or collaboration opportunities, please contact us at:
